@@ -25,6 +25,7 @@
  *   services/products/brands, then about) and stops as soon as it finds one.
  *
  * INPUT
+ *   runName         (string, optional - any text, spaces, symbols, emoji)
  *   urls            (array, required)
  *   geminiApiKey    (string, or GEMINI_API_KEY env var)
  *   maxSubpages     (number, default 4)
@@ -591,6 +592,11 @@ function normalizeUrl(raw) {
 Actor.main(async () => {
   const input = (await Actor.getInput()) || {};
   const { maxSubpages = 4, skipOnGeminiNo = false, delayMs = 1500 } = input;
+
+  // Run name is free text: any characters, spaces, symbols and emoji are kept
+  // exactly as typed. It's stored as a field on every row (not used as a
+  // dataset name, since Apify dataset names only allow a-z, 0-9 and "-").
+  const runName = typeof input.runName === 'string' && input.runName.length > 0 ? input.runName : null;
   const geminiApiKey = input.geminiApiKey || process.env.GEMINI_API_KEY;
   const urls = [...new Set((input.urls || []).map(normalizeUrl).filter(Boolean))];
 
@@ -598,6 +604,11 @@ Actor.main(async () => {
   console.log('Input:', JSON.stringify({ ...input, geminiApiKey: geminiApiKey ? '***' : undefined }, null, 2));
 
   if (!urls.length) throw new Error('No URLs provided. Input should contain a "urls" array.');
+
+  if (runName) {
+    console.log(`🏷️  Run name: ${runName}`);
+    await Actor.setStatusMessage(`${runName}: starting (${urls.length} URLs)`).catch(() => {});
+  }
 
   const model = geminiApiKey
     ? new GoogleGenerativeAI(geminiApiKey).getGenerativeModel({
@@ -610,11 +621,13 @@ Actor.main(async () => {
     console.warn('⚠️  No Gemini API key: brand-only sites will stay MAYBE and no summaries will be generated.');
   }
 
-  console.log('🧹 Clearing previous results...');
-  await (await Actor.openDataset('results')).drop();
-  await (await Actor.openDataset('detail-logs')).drop();
-  const results = await Actor.openDataset('results');
-  const detailLogs = await Actor.openDataset('detail-logs');
+  // Results go to the run's DEFAULT dataset (shows in the Output tab) and
+  // detail logs to the DEFAULT key-value store. Named datasets were removed:
+  // under Apify's LIMITED_PERMISSIONS mode an actor can't open or drop named
+  // storages created by another actor (e.g. the old "results" dataset), which
+  // crashed the run. Default storages are fresh for every run, so no clearing
+  // is needed either.
+  const detailLogs = [];
 
   const tally = { KEEP: 0, MAYBE: 0, SKIP: 0, ERROR: 0 };
 
@@ -626,8 +639,9 @@ Actor.main(async () => {
       const analysis = await analyzeSite(url, { model, maxSubpages, skipOnGeminiNo });
       const { detail, ...summary } = analysis;
 
-      await results.pushData({ url, status: 'success', ...summary, timestamp: new Date() });
-      await detailLogs.pushData({
+      await Actor.pushData({ runName, url, status: 'success', ...summary, timestamp: new Date() });
+      detailLogs.push({
+        runName,
         url,
         recommendation: analysis.recommendation,
         decisionPath: analysis.decisionPath,
@@ -645,11 +659,22 @@ Actor.main(async () => {
     } catch (error) {
       tally.ERROR++;
       console.error(`  ❌ Error: ${error.message}`);
-      await results.pushData({ url, status: 'error', error: error.message, timestamp: new Date() });
+      await Actor.pushData({ runName, url, status: 'error', error: error.message, timestamp: new Date() });
+    }
+
+    try {
+      await Actor.setValue('DETAIL_LOGS', detailLogs);
+    } catch (e) {
+      console.warn(`  ⚠️  Could not save detail logs: ${e.message}`);
     }
 
     if (i < urls.length - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
-  console.log(`\n✅ Done. KEEP: ${tally.KEEP} | MAYBE: ${tally.MAYBE} | SKIP: ${tally.SKIP} | ERROR: ${tally.ERROR}`);
+  const doneMsg = `Done. KEEP: ${tally.KEEP} | MAYBE: ${tally.MAYBE} | SKIP: ${tally.SKIP} | ERROR: ${tally.ERROR}`;
+  console.log(`\n✅ ${runName ? `${runName}: ` : ''}${doneMsg}`);
+
+  // Run summary record, handy for finding a run by name later
+  await Actor.setValue('RUN_SUMMARY', { runName, urlCount: urls.length, ...tally, finishedAt: new Date() });
+  await Actor.setStatusMessage(`${runName ? `${runName}: ` : ''}${doneMsg}`, { isStatusMessageTerminal: true }).catch(() => {});
 });
