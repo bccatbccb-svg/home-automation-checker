@@ -1,0 +1,48 @@
+{
+  "title": "Window Covering Qualifier input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "runName": {
+      "title": "Run name",
+      "type": "string",
+      "description": "Optional label for this run. Any text is allowed, including spaces, symbols, accents and emoji (e.g. \"Denver integrators – Batch #3 (Sept '26) ✅\"). Saved on every result row and in the RUN_SUMMARY record.",
+      "editor": "textfield"
+    },
+    "urls": {
+      "title": "Website URLs",
+      "type": "array",
+      "description": "Websites to check, one per line. URLs without https:// are fixed automatically.",
+      "editor": "stringList",
+      "prefill": ["https://example-smarthome.com"]
+    },
+    "geminiApiKey": {
+      "title": "Gemini API key",
+      "type": "string",
+      "description": "Used for summaries and to confirm brand-only sites. Falls back to the GEMINI_API_KEY environment variable.",
+      "editor": "textfield",
+      "isSecret": true
+    },
+    "maxSubpages": {
+      "title": "Max subpages per site",
+      "type": "integer",
+      "description": "Internal pages to fetch after the homepage.",
+      "default": 4,
+      "minimum": 0,
+      "maximum": 15
+    },
+    "skipOnGeminiNo": {
+      "title": "SKIP brand-only sites when Gemini says no",
+      "type": "boolean",
+      "description": "Off: these stay MAYBE (low). On: they become SKIP.",
+      "default": false
+    },
+    "delayMs": {
+      "title": "Delay between sites (ms)",
+      "type": "integer",
+      "default": 1500,
+      "minimum": 0
+    }
+  },
+  "required": ["urls"]
+}
